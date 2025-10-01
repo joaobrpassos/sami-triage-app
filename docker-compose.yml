@@ -1,0 +1,14 @@
+services:
+  backend:
+    build: ./app/backend
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.example
+    depends_on:
+      - flask_ai
+
+  flask_ai:
+    build: ./app/flask-ai
+    ports:
+      - "5000:5000"
