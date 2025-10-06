@@ -4,11 +4,13 @@ services:
     ports:
       - "3000:3000"
     env_file:
-      - .env.example
+      - .env
     depends_on:
       - flask_ai
 
   flask_ai:
-    build: ./app/flask-ai
+    build:
+      context: ./app/flask-ai
+      dockerfile: Dockerfile
     ports:
       - "5000:5000"
