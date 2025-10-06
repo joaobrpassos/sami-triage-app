@@ -219,7 +219,7 @@ Please provide a concise SOAP note with these exact sections:
 - Subjective: Patient's reported symptoms in their own words
 - Objective: Clinical observations and vital signs, if not reported in medical history ask 
 - Assessment: Clinical impression and triage priority
-- Plan: Recommended actions and next steps, make questions here if necessary to start chat
+- Plan: Recommended actions and next steps, make questions here necessary to start chat
 - Next Step: Specific recommendation (emergency care, teleconsultation, or self-care)
 - start_chat: Boolean variable (True/False) - True if teleconsultation chat is needed, False for self-care cases
 
@@ -333,38 +333,3 @@ Format your response with clear section headers followed by colons."""
     def _log_request(self, request_id: str, status: str, latency: str):
         """Log request information"""
         print(f"TriageAgent - Request {request_id} - Status: {status} - Latency: {latency}")
-
-# Example usage and testing
-if __name__ == "__main__":
-    # Test the agent
-    print("Testing Agent with Gemini:")
-    
-    try:
-        agent = Agent()
-        
-        # Test 1: Triage function
-        print("\n1. Testing Triage Function:")
-        test_data = {
-            "symptoms": "Headache and fever for 2 days",
-            "age": 25,
-            "medical_history": "No significant medical history"
-        }
-        
-        triage_result = agent.run(test_data)
-        print("Triage Result:")
-        print(json.dumps(triage_result, indent=2))
-        
-        # Test 2: Chat function
-        print("\n2. Testing Chat Function:")
-        chat_messages = [
-            {"role": "user", "content": "Hello, I have a headache and fever"},
-            {"role": "assistant", "content": "I understand you're experiencing headache and fever. How long have you had these symptoms?"},
-            {"role": "user", "content": "About 2 days now, and my temperature is 38°C"}
-        ]
-        
-        chat_result = agent.run_chat(chat_messages)
-        print("Chat Result:")
-        print(json.dumps(chat_result, indent=2))
-        
-    except Exception as e:
-        print(f"Agent initialization failed: {e}")
