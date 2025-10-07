@@ -35,9 +35,10 @@
 
 .chat-section {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: 320px 1fr;
   gap: 30px;
-  height: 600px;
+  min-height: 600px;
+  align-items: start;
 }
 
 .triage-summary {
@@ -59,6 +60,38 @@
   margin-bottom: 15px;
   color: #6c757d;
   line-height: 1.5;
+}
+
+.soap-summary {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #dee2e6;
+}
+
+.soap-summary h4 {
+  margin-bottom: 15px;
+  color: #343a40;
+  font-size: 1.1rem;
+}
+
+.soap-summary ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.soap-summary li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #495057;
+}
+
+.soap-summary li span {
+  color: #6c757d;
+  line-height: 1.4;
 }
 
 .reset-btn {

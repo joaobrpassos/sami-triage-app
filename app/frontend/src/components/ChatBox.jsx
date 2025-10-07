@@ -1,11 +1,12 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import axios from 'axios'
 import './ChatBox.css'
 
-const ChatBox = ({ triageData }) => {
+const ChatBox = ({ triageData, sessionId, onSummaryUpdate }) => {
 	const [messages, setMessages] = useState([])
 	const [inputMessage, setInputMessage] = useState('')
 	const [loading, setLoading] = useState(false)
+	const [currentSessionId, setCurrentSessionId] = useState(sessionId ?? null)
 	const messagesEndRef = useRef(null)
 
 	const scrollToBottom = () => {
@@ -16,26 +17,85 @@ const ChatBox = ({ triageData }) => {
 		scrollToBottom()
 	}, [messages])
 
+	useEffect(() => {
+		setCurrentSessionId(sessionId ?? null)
+	}, [sessionId])
+
+	useEffect(() => {
+		setMessages([])
+		setInputMessage('')
+	}, [triageData])
+
+	const extractSummaryText = useCallback((summaryObject, fallbackResponse, errorText) => {
+		if (summaryObject?.summary) {
+			return summaryObject.summary
+		}
+
+		if (typeof fallbackResponse === 'string' && fallbackResponse.trim()) {
+			return fallbackResponse.trim()
+		}
+
+		if (typeof errorText === 'string' && errorText.trim()) {
+			return errorText.trim()
+		}
+
+		return 'I apologize, but I could not generate a summary.'
+	}, [])
+
 	const sendMessage = async (e) => {
 		e.preventDefault()
-		if (!inputMessage.trim() || loading) return
+		const trimmedMessage = inputMessage.trim()
+		if (!trimmedMessage || loading) return
 
-		const userMessage = { text: inputMessage, sender: 'user', timestamp: new Date() }
-		setMessages(prev => [...prev, userMessage])
+		const timestamp = new Date()
+		const userMessage = { text: trimmedMessage, sender: 'user', timestamp }
+		const updatedMessages = [...messages, userMessage]
+		setMessages(updatedMessages)
 		setInputMessage('')
 		setLoading(true)
 
 		try {
-			const response = await axios.post('/api/chat', {
-				message: inputMessage,
-				triageData: triageData,
-				conversationHistory: messages
-			})
+			const conversationHistory = updatedMessages.map((message) => ({
+				role: message.sender === 'user' ? 'user' : 'assistant',
+				content: message.text
+			}))
+
+			const payload = {
+				message: trimmedMessage,
+				messages: conversationHistory,
+				triageData,
+				...(currentSessionId ? { session_id: currentSessionId } : {})
+			}
+
+			const response = await axios.post('/chat', payload)
+			const { summary, session_id: newSessionId, response: fallbackResponse, error } = response.data ?? {}
+
+			if (newSessionId && newSessionId !== currentSessionId) {
+				setCurrentSessionId(newSessionId)
+			}
+
+			let summaryForParent = summary ?? null
+			if (summaryForParent && newSessionId) {
+				summaryForParent = { ...summaryForParent, session_id: newSessionId }
+			}
+			if (!summaryForParent && fallbackResponse) {
+				summaryForParent = {
+					raw_response: fallbackResponse,
+					session_id: newSessionId ?? currentSessionId ?? undefined
+				}
+			}
+			if (onSummaryUpdate && summaryForParent) {
+				onSummaryUpdate(summaryForParent)
+			}
+
+			const botText = extractSummaryText(summary, fallbackResponse, error)
 
 			const botMessage = {
-				text: response.data.response,
+				text: botText,
 				sender: 'bot',
-				timestamp: new Date()
+				timestamp: new Date(),
+				summary: summary ?? null,
+				error: error ?? null
 			}
 			setMessages(prev => [...prev, botMessage])
 		} catch (error) {

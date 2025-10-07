@@ -21,13 +21,25 @@ export async function chatHandler(req, res) {
       return res.status(400).json({ error: "message must be a non-empty string" });
     }
 
-    const sessionId = sessionIdFromRequest || uuidv4();
-    const aiResponse = await aiProvider.chat(finalMessage, { sessionId });
+    const provisionalSessionId = sessionIdFromRequest || uuidv4();
+    const aiResponse = await aiProvider.chat(finalMessage, { sessionId: provisionalSessionId });
+
+    const {
+      session_id: providerSessionId,
+      raw_response,
+      ...summaryData
+    } = aiResponse || {};
+
+    if (raw_response !== undefined) {
+      summaryData.raw_response = raw_response;
+    }
+
+    const finalSessionId = providerSessionId || provisionalSessionId;
 
     return res.json({
       chat: true,
-      session_id: sessionId,
-      ...aiResponse,
+      session_id: finalSessionId,
+      summary: summaryData,
     });
   } catch (err) {
     console.error(err);

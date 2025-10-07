@@ -65,8 +65,23 @@ class GeminiAIProvider:
                 # Send the last message (most recent) to get response
                 last_message = messages[-1]["content"]
                 response = chat.send_message(last_message)
-            
-            return response.text
+
+            text_response = getattr(response, "text", None)
+            if text_response:
+                return text_response
+
+            # Fallback: concatenate candidate content if available
+            candidates = getattr(response, "candidates", None)
+            if candidates:
+                parts = []
+                for candidate in candidates:
+                    content = getattr(candidate, "content", None)
+                    if content and getattr(content, "parts", None):
+                        parts.extend(str(part) for part in content.parts)
+                if parts:
+                    return "\n".join(parts)
+
+            return str(response)
             
         except Exception as e:
             logging.error(f"Gemini chat failed: {e}")
@@ -74,6 +89,16 @@ class GeminiAIProvider:
     
     def _build_context_prompt(self, triage_context: Dict, messages: List[Dict[str, str]]) -> str:
         """Build a prompt that includes triage context"""
+        age = triage_context.get('age')
+        age_text = age if age is not None else 'Not specified'
+        severity = triage_context.get('severity')
+        severity_text = severity if severity is not None else 'Not specified'
+        duration = triage_context.get('duration') or 'Not specified'
+        gender = triage_context.get('gender') or 'Not specified'
+        medical_history = triage_context.get('medical_history') or 'None provided'
+        current_medications = triage_context.get('current_medications') or 'None provided'
+        initial_symptoms = triage_context.get('symptoms') or 'Not specified'
+
         context_info = f"""
 You are a professional healthcare assistant specialized in patient triage. 
 Provide accurate, clinically appropriate SOAP notes. Be concise but thorough.
@@ -85,12 +110,16 @@ Objective: [clinical observations]
 Assessment: [clinical impression and priority]
 Plan: [recommended actions]
 Next Step: [specific recommendation]
-
+Summary: [humanized summary of the response]
 
 PATIENT TRIAGE CONTEXT (remember this information):
-- Age: {triage_context.get('age', 'Not specified')}
-- Initial Symptoms: {triage_context.get('symptoms', 'Not specified')}
-- Medical History: {triage_context.get('medical_history', 'None provided')}
+- Age: {age_text}
+- Severity: {severity_text}
+- Duration: {duration}
+- Gender: {gender}
+- Initial Symptoms: {initial_symptoms}
+- Medical History: {medical_history}
+- Current Medications: {current_medications}
 - Current Assessment: {triage_context.get('assessment', 'Not assessed')}
 - Current Plan: {triage_context.get('plan', 'No plan yet')}
 
@@ -127,53 +156,91 @@ class Agent:
         """Setup logging"""
         logger = logging.getLogger("TriageAgent")
         logger.setLevel(logging.INFO)
-        
+
         if logger.handlers:
             logger.handlers.clear()
-        
+
         handler = logging.StreamHandler()
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
         logger.addHandler(handler)
         logger.propagate = False
-        
+
         return logger
+
+    def _normalize_triage_input(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize incoming triage payload into consistent structure."""
+
+        def parse_optional_int(value: Any) -> Optional[int]:
+            if value is None or value == "":
+                return None
+            try:
+                if isinstance(value, str):
+                    value = value.strip()
+                    if value == "":
+                        return None
+                return int(float(value))
+            except (ValueError, TypeError):
+                return None
+
+        def parse_optional_str(value: Any) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, str):
+                return value.strip()
+            return str(value).strip()
+
+        medical_history_source = data.get("medical_history")
+        if medical_history_source is None:
+            medical_history_source = data.get("medicalHistory")
+
+        current_medications_source = data.get("current_medications")
+        if current_medications_source is None:
+            current_medications_source = data.get("currentMedications")
+
+        normalized = {
+            "symptoms": parse_optional_str(data.get("symptoms", "")),
+            "severity": parse_optional_int(data.get("severity")),
+            "duration": parse_optional_str(data.get("duration", "")),
+            "age": parse_optional_int(data.get("age")),
+            "gender": parse_optional_str(data.get("gender", "")),
+            "medical_history": parse_optional_str(medical_history_source or ""),
+            "current_medications": parse_optional_str(current_medications_source or ""),
+        }
+
+        return normalized
     
     def run(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Main method called by your Flask app for triage
-        Expects data with: symptoms, age, medical_history (optional)
-        Returns response in the exact format your frontend expects
+        Main method called by your Flask app for triage.
+        Expects data with: symptoms, severity, duration, age, gender, medical_history, current_medications
+        Returns response in the exact format your frontend expects.
         """
         request_id = str(uuid.uuid4())
         start_time = datetime.now()
-        
+
         try:
-            # Extract data with defaults
-            symptoms = data.get('symptoms', '')
-            age = data.get('age', 0)
-            medical_history = data.get('medical_history', '')
-            
+            # Normalize incoming triage data
+            triage_input = self._normalize_triage_input(data)
+
             # Generate AI response
-            response = self._generate_ai_response(symptoms, age, medical_history)
-            
+            response = self._generate_ai_response(triage_input)
+
             # Calculate latency
             latency = f"{(datetime.now() - start_time).total_seconds():.3f}s"
-            
+
             # Store triage session for future chat conversations
             session_id = str(uuid.uuid4())
             self.triage_sessions[session_id] = {
-                'symptoms': symptoms,
-                'age': age,
-                'medical_history': medical_history,
+                **triage_input,
                 'assessment': response.get('assessment', ''),
                 'plan': response.get('plan', ''),
                 'created_at': datetime.now().isoformat()
             }
-            
+
             # Log successful request
             self._log_request(request_id, "success", latency)
-            
+
             # Add metadata to response
             response.update({
                 "request_id": request_id,
@@ -181,16 +248,16 @@ class Agent:
                 "latency": latency,
                 "timestamp": datetime.now().isoformat(),
                 "ai_provider": "GeminiAI",
-                "model_used": self.ai_provider.model_name
+                "model_used": self.ai_provider.model_name,
+                "triage_input": triage_input
             })
-            
+
             return response
             
         except Exception as e:
             latency = f"{(datetime.now() - start_time).total_seconds():.3f}s"
             self._log_request(request_id, f"error: {str(e)}", latency)
             
-            # Return error response
             return {
                 "subjective": f"Patient reports: {data.get('symptoms', '')}",
                 "objective": "Evaluation unavailable",
@@ -249,30 +316,58 @@ class Agent:
                 print(f"Using triage context for session: {session_id}")
             
             # Get AI response for chat with context
-            ai_response = self.ai_provider.chat_complete(messages, triage_context)
-            
+            ai_response_text = self.ai_provider.chat_complete(messages, triage_context)
+
+            # Build reference data for parsing
+            last_user_message = messages[-1]["content"] if messages else ""
+            triage_reference = triage_context.copy() if isinstance(triage_context, dict) else {}
+            if "symptoms" not in triage_reference or not triage_reference.get("symptoms"):
+                triage_reference["symptoms"] = last_user_message
+
+            # Parse AI response into SOAP structure
+            summary_sections = self._parse_ai_response(ai_response_text, triage_reference)
+
             # Calculate latency
             latency = f"{(datetime.now() - start_time).total_seconds():.3f}s"
-            
+
             # Log successful request
             self._log_request(request_id, "chat_success", latency)
-            
-            response_data = {
-                "response": ai_response,
+
+            # Update stored session context if available
+            if session_id:
+                stored_session = self.triage_sessions.get(session_id, {})
+                if not isinstance(stored_session, dict):
+                    stored_session = {}
+                stored_session.update({
+                    "symptoms": stored_session.get("symptoms") or last_user_message,
+                    "assessment": summary_sections.get("assessment", stored_session.get("assessment", "")),
+                    "plan": summary_sections.get("plan", stored_session.get("plan", "")),
+                    "medical_history": stored_session.get("medical_history", ""),
+                    "current_medications": stored_session.get("current_medications", ""),
+                    "severity": stored_session.get("severity"),
+                    "duration": stored_session.get("duration"),
+                    "gender": stored_session.get("gender"),
+                    "last_summary": summary_sections.get("summary", ""),
+                    "updated_at": datetime.now().isoformat()
+                })
+                self.triage_sessions[session_id] = stored_session
+
+            summary_payload = {
+                **summary_sections,
                 "request_id": request_id,
                 "latency": latency,
                 "timestamp": datetime.now().isoformat(),
                 "ai_provider": "GeminiAI",
                 "model_used": self.ai_provider.model_name,
                 "message_count": len(messages),
-                "has_triage_context": triage_context is not None
+                "has_triage_context": triage_context is not None,
+                "raw_response": ai_response_text
             }
-            
-            # Include session_id in response if we have context
+
             if session_id:
-                response_data["session_id"] = session_id
-            
-            return response_data
+                summary_payload["session_id"] = session_id
+
+            return summary_payload
             
         except Exception as e:
             latency = f"{(datetime.now() - start_time).total_seconds():.3f}s"
@@ -291,35 +386,62 @@ class Agent:
         """Get triage session information"""
         return self.triage_sessions.get(session_id)
     
-    def _generate_ai_response(self, symptoms: str, age: int, medical_history: str) -> Dict[str, Any]:
+    def _generate_ai_response(self, triage_input: Dict[str, Any]) -> Dict[str, Any]:
         """Generate response using AI provider"""
-        prompt = self._build_soap_prompt(symptoms, age, medical_history)
+        prompt = self._build_soap_prompt(triage_input)
         system_message = self._get_system_prompt()
-        
+
         ai_response = self.ai_provider.complete(prompt, system_message)
-        
+
         # Parse AI response into structured format
-        return self._parse_ai_response(ai_response, symptoms)
-    
-    def _build_soap_prompt(self, symptoms: str, age: int, medical_history: str) -> str:
+        return self._parse_ai_response(ai_response, triage_input)
+
+    def _build_soap_prompt(self, triage_input: Dict[str, Any]) -> str:
         """Build SOAP format prompt for AI"""
+        age = triage_input.get('age')
+        severity = triage_input.get('severity')
+        duration = triage_input.get('duration')
+        gender = triage_input.get('gender')
+        medical_history = triage_input.get('medical_history')
+        current_medications = triage_input.get('current_medications')
+        symptoms = triage_input.get('symptoms', '')
+
+        age_text = age if age is not None else "Not provided"
+        severity_text = severity if severity is not None else "Not provided"
+        duration_text = duration if duration else "Not provided"
+        gender_text = gender if gender else "Not provided"
+        medical_history_text = medical_history if medical_history else "None provided"
+        current_medications_text = current_medications if current_medications else "None provided"
+
         return f"""
+You are a professional healthcare assistant specialized in patient triage. 
+Provide accurate, clinically appropriate SOAP notes. Be concise but thorough.
+Focus on patient safety and appropriate next steps. 
 Create a clinical SOAP note for patient triage based on this information:
 
-Patient Age: {age}
+Patient Age: {age_text}
+Reported Severity (1-10): {severity_text}
+Symptom Duration: {duration_text}
+Gender: {gender_text}
 Symptoms: {symptoms}
-Medical History: {medical_history if medical_history else "None provided"}
+Medical History: {medical_history_text}
+Current Medications: {current_medications_text}
 
 Please provide a concise SOAP note with these exact sections:
 - Subjective: Patient's reported symptoms in their own words
 - Objective: Clinical observations and vital signs
 - Assessment: Clinical impression and triage priority
-- Plan: Recommended actions and next steps
-- Next Step: Specific recommendation (emergency care, teleconsultation, or self-care)
+- Plan: Recommended actions
+- Next Step: Specific recommendation
 - start_chat: Boolean variable (True/False) - True if teleconsultation chat is needed
-
-Format the response as a structured clinical note. If inputs are in Portuguese, return response in Portuguese.
-
+"""
+    
+    def _get_system_prompt(self) -> str:
+        """Get system prompt for AI"""
+        return """You are a professional healthcare assistant specialized in patient triage. 
+Provide accurate, clinically appropriate SOAP notes. Be concise but thorough.
+Focus on patient safety and appropriate next steps. 
+Your goal is to create a complete SOAP note of the case, ask the nescessary questions to complete and return the SOAP note. 
 Please format your response exactly like this:
 Subjective: [patient symptoms description]
 Objective: [clinical observations] 
@@ -328,25 +450,18 @@ Plan: [recommended actions]
 Next Step: [specific recommendation]
 start_chat: [True/False]
 """
-    
-    def _get_system_prompt(self) -> str:
-        """Get system prompt for AI"""
-        return """You are a professional healthcare assistant specialized in patient triage. 
-Provide accurate, clinically appropriate SOAP notes. Be concise but thorough.
-Focus on patient safety and appropriate next steps.
-Return ONLY the SOAP note without any additional commentary.
-Format your response with clear section headers followed by colons."""
-    
-    def _parse_ai_response(self, ai_response: str, original_symptoms: str) -> Dict[str, Any]:
+
+    def _parse_ai_response(self, ai_response: str, triage_input: Dict[str, Any]) -> Dict[str, Any]:
         """Parse AI response into structured format"""
         try:
             # Initialize with defaults
             sections = {
-                "subjective": f"Patient reports: {original_symptoms}",
+                "subjective": f"Patient reports: {triage_input.get('symptoms', '')}",
                 "objective": "Clinical evaluation needed",
                 "assessment": "Professional assessment required", 
                 "plan": "Follow medical advice",
                 "nextStep": "Teleconsultation recommended",
+                "summary": triage_input.get('summary', "") or triage_input.get('last_summary', ""),
                 "start_chat": False
             }
             
@@ -382,6 +497,11 @@ Format your response with clear section headers followed by colons."""
                     if ':' in line:
                         sections['nextStep'] = line.split(':', 1)[1].strip()
                     continue
+                elif line.lower().startswith('summary'):
+                    current_section = 'summary'
+                    if ':' in line:
+                        sections['summary'] = line.split(':', 1)[1].strip()
+                    continue
                 elif 'start_chat' in line.lower():
                     current_section = 'start_chat'
                     if ':' in line:
@@ -403,6 +523,7 @@ Format your response with clear section headers followed by colons."""
                 "assessment": sections["assessment"],
                 "plan": sections["plan"],
                 "nextStep": sections["nextStep"],
+                "summary": sections["summary"],
                 "start_chat": sections["start_chat"]
             }
             
@@ -411,12 +532,13 @@ Format your response with clear section headers followed by colons."""
             print(f"AI Response was: {ai_response}")
             # Fallback response
             return {
-                "subjective": f"Patient reports: {original_symptoms}",
+                "subjective": f"Patient reports: {triage_input.get('symptoms', '')}",
                 "objective": "AI evaluation completed",
                 "assessment": "Requires professional review",
                 "plan": "Follow healthcare provider guidance",
                 "nextStep": "Teleconsultation recommended",
-                "start_chat": self._should_start_chat(original_symptoms)
+                "summary": triage_input.get('summary', "") or "Summary unavailable.",
+                "start_chat": self._should_start_chat(triage_input.get('symptoms', ''))
             }
     
     def _should_start_chat(self, symptoms: str) -> bool:

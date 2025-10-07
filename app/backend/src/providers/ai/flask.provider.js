@@ -3,25 +3,39 @@ import fetch from "node-fetch";
 export default {
   name: "flask",
   async complete(prompt, options = {}) {
-    // Parse the prompt string to extract structured data
-    // Expected format: "Symptoms: ...\nAge: ...\nHistory: ..."
+    // Parse incoming triage payload or fallback prompt string
     let data = {};
 
-    if (typeof prompt === 'string') {
-      const lines = prompt.split('\n');
-      lines.forEach(line => {
-        if (line.startsWith('Symptoms:')) {
-          data.symptoms = line.replace('Symptoms:', '').trim();
-        } else if (line.startsWith('Age:')) {
-          data.age = parseInt(line.replace('Age:', '').trim()) || 0;
-        } else if (line.startsWith('History:')) {
-          const history = line.replace('History:', '').trim();
-          data.medical_history = history !== 'N/A' ? history : '';
+    if (typeof prompt === "string") {
+      const lines = prompt.split("\n");
+      lines.forEach((line) => {
+        if (line.startsWith("Symptoms:")) {
+          data.symptoms = line.replace("Symptoms:", "").trim();
+        } else if (line.startsWith("Severity:")) {
+          const value = Number(line.replace("Severity:", "").trim());
+          data.severity = Number.isNaN(value) ? null : value;
+        } else if (line.startsWith("Duration:")) {
+          data.duration = line.replace("Duration:", "").trim();
+        } else if (line.startsWith("Age:")) {
+          const ageValue = Number(line.replace("Age:", "").trim());
+          data.age = Number.isNaN(ageValue) ? null : ageValue;
+        } else if (line.startsWith("Gender:")) {
+          data.gender = line.replace("Gender:", "").trim();
+        } else if (line.startsWith("Medical History:")) {
+          const history = line.replace("Medical History:", "").trim();
+          data.medical_history = history !== "N/A" ? history : "";
+        } else if (line.startsWith("Current Medications:")) {
+          const meds = line.replace("Current Medications:", "").trim();
+          data.current_medications = meds !== "N/A" ? meds : "";
         }
       });
-    } else if (typeof prompt === 'object') {
-      // If already an object, use it directly
-      data = prompt;
+    } else if (prompt && typeof prompt === "object") {
+      // If already an object, clone to avoid accidental mutation
+      data = { ...prompt };
+    }
+
+    if (!data.symptoms && typeof options?.fallbackPrompt === "string") {
+      return this.complete(options.fallbackPrompt);
     }
 
     const response = await fetch("http://flask_ai:5000/generate_summary", {

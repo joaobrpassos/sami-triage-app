@@ -28,7 +28,7 @@ const TriageForm = ({ onTriageComplete }) => {
 		setError('')
 
 		try {
-			const response = await axios.post('/api/triage', formData)
+			const response = await axios.post('/triage', formData)
 			onTriageComplete({
 				...formData,
 				triageResult: response.data
@@ -100,6 +100,7 @@ const TriageForm = ({ onTriageComplete }) => {
 							type="number"
 							id="age"
 							name="age"
+							min="0"
 							value={formData.age}
 							onChange={handleChange}
 							placeholder="Your age"
@@ -117,8 +118,6 @@ const TriageForm = ({ onTriageComplete }) => {
 							<option value="">Select</option>
 							<option value="male">Male</option>
 							<option value="female">Female</option>
-							<option value="other">Other</option>
-							<option value="prefer-not-to-say">Prefer not to say</option>
 						</select>
 					</div>
 				</div>
