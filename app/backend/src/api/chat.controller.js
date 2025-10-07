@@ -1,24 +1,33 @@
 // src/controllers/chat.controller.js
+import { v4 as uuidv4 } from "uuid";
 import aiProvider from "../providers/ai/index.js";
 
 export async function chatHandler(req, res) {
   try {
-    const { body } = req;
+    const { message, messages, session_id: sessionIdFromRequest } = req.body ?? {};
 
-    const prompt = `
-      Você é um assistente de triagem médica.
-      O paciente forneceu os seguintes dados iniciais:
-      ${JSON.stringify(body)}
+    let finalMessage = typeof message === "string" ? message : undefined;
 
-      Inicie uma conversa fazendo perguntas curtas e objetivas
-      para coletar mais informações relevantes.
-    `;
+    if (!finalMessage && Array.isArray(messages) && messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      if (typeof lastMessage === "string") {
+        finalMessage = lastMessage;
+      } else if (lastMessage && typeof lastMessage === "object") {
+        finalMessage = lastMessage.content ?? "";
+      }
+    }
 
-    const reply = await aiProvider.complete(prompt);
+    if (typeof finalMessage !== "string" || finalMessage.trim() === "") {
+      return res.status(400).json({ error: "message must be a non-empty string" });
+    }
 
-    res.json({
+    const sessionId = sessionIdFromRequest || uuidv4();
+    const aiResponse = await aiProvider.chat(finalMessage, { sessionId });
+
+    return res.json({
       chat: true,
-      message: reply,
+      session_id: sessionId,
+      ...aiResponse,
     });
   } catch (err) {
     console.error(err);

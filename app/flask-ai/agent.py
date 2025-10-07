@@ -51,21 +51,60 @@ class GeminiAIProvider:
             logging.error(f"Gemini AI request failed: {e}")
             raise Exception(f"Gemini AI service error: {e}")
     
-    def chat_complete(self, messages: List[Dict[str, str]]) -> str:
-        """Run chat conversation with message history"""
+    def chat_complete(self, messages: List[Dict[str, str]], triage_context: Optional[Dict] = None) -> str:
+        """Run chat conversation with message history and triage context"""
         try:
             # Start a chat session
             chat = self.model.start_chat(history=[])
             
-            # Send the last message (most recent) to get response
-            last_message = messages[-1]["content"]
-            response = chat.send_message(last_message)
+            # Build context-aware prompt if triage info is available
+            if triage_context:
+                context_prompt = self._build_context_prompt(triage_context, messages)
+                response = chat.send_message(context_prompt)
+            else:
+                # Send the last message (most recent) to get response
+                last_message = messages[-1]["content"]
+                response = chat.send_message(last_message)
             
             return response.text
             
         except Exception as e:
             logging.error(f"Gemini chat failed: {e}")
             raise Exception(f"Gemini chat error: {e}")
+    
+    def _build_context_prompt(self, triage_context: Dict, messages: List[Dict[str, str]]) -> str:
+        """Build a prompt that includes triage context"""
+        context_info = f"""
+You are a professional healthcare assistant specialized in patient triage. 
+Provide accurate, clinically appropriate SOAP notes. Be concise but thorough.
+Focus on patient safety and appropriate next steps. 
+Your goal is to create a complete SOAP note of the case, ask the nescessary questions to complete and return the SOAP note. 
+Please format your response exactly like this:
+Subjective: [patient symptoms description]
+Objective: [clinical observations] 
+Assessment: [clinical impression and priority]
+Plan: [recommended actions]
+Next Step: [specific recommendation]
+
+
+PATIENT TRIAGE CONTEXT (remember this information):
+- Age: {triage_context.get('age', 'Not specified')}
+- Initial Symptoms: {triage_context.get('symptoms', 'Not specified')}
+- Medical History: {triage_context.get('medical_history', 'None provided')}
+- Current Assessment: {triage_context.get('assessment', 'Not assessed')}
+- Current Plan: {triage_context.get('plan', 'No plan yet')}
+
+CONVERSATION HISTORY:
+"""
+        
+        # Add conversation history
+        for msg in messages:
+            role = "Patient" if msg["role"] == "user" else "Assistant"
+            context_info += f"{role}: {msg['content']}\n"
+        
+        context_info += "\nPlease continue the conversation while keeping the patient's triage context in mind."
+        
+        return context_info
 
 class Agent:
     """Main Agent class that integrates with your Flask app"""
@@ -73,6 +112,8 @@ class Agent:
     def __init__(self):
         self.ai_provider = self._create_ai_provider()
         self.logger = self._setup_logging()
+        # Store triage sessions in memory (in production, use a database)
+        self.triage_sessions = {}
     
     def _create_ai_provider(self):
         """Create AI provider - only Gemini supported now"""
@@ -119,12 +160,24 @@ class Agent:
             # Calculate latency
             latency = f"{(datetime.now() - start_time).total_seconds():.3f}s"
             
+            # Store triage session for future chat conversations
+            session_id = str(uuid.uuid4())
+            self.triage_sessions[session_id] = {
+                'symptoms': symptoms,
+                'age': age,
+                'medical_history': medical_history,
+                'assessment': response.get('assessment', ''),
+                'plan': response.get('plan', ''),
+                'created_at': datetime.now().isoformat()
+            }
+            
             # Log successful request
             self._log_request(request_id, "success", latency)
             
             # Add metadata to response
             response.update({
                 "request_id": request_id,
+                "session_id": session_id,  # Important: This links triage to chat
                 "latency": latency,
                 "timestamp": datetime.now().isoformat(),
                 "ai_provider": "GeminiAI",
@@ -151,22 +204,52 @@ class Agent:
                 "timestamp": datetime.now().isoformat()
             }
     
-    def run_chat(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    def run_chat(self, payload: Any, session_id: Optional[str] = None) -> Dict[str, Any]:
         """
-        Run chat conversation with message history
-        Expects messages in format: [{"role": "user", "content": "message"}, ...]
+        Run chat conversation with optional triage context.
+        Accepts either:
+          - a plain string representing the latest user message
+          - a dict containing a 'message' string or legacy 'messages' list
+          - a list of message dicts in the format [{"role": "user", "content": "..."}, ...]
         Returns AI response for conversation
         """
         request_id = str(uuid.uuid4())
         start_time = datetime.now()
         
         try:
-            # Validate messages
+            messages: List[Dict[str, str]] = []
+
+            if isinstance(payload, str):
+                message_text = payload.strip()
+                if not message_text:
+                    raise ValueError("Message cannot be empty")
+                messages = [{"role": "user", "content": message_text}]
+            elif isinstance(payload, dict):
+                if "message" in payload and isinstance(payload["message"], str):
+                    message_text = payload["message"].strip()
+                    if not message_text:
+                        raise ValueError("Message cannot be empty")
+                    messages = [{"role": "user", "content": message_text}]
+                elif "messages" in payload and isinstance(payload["messages"], list):
+                    messages = payload["messages"]
+                else:
+                    raise ValueError("Payload must contain 'message' string or 'messages' list")
+            elif isinstance(payload, list):
+                messages = payload
+            else:
+                raise ValueError("Unsupported payload type for chat")
+
             if not messages:
                 raise ValueError("Messages list cannot be empty")
+
+            # Get triage context if session_id is provided
+            triage_context = None
+            if session_id and session_id in self.triage_sessions:
+                triage_context = self.triage_sessions[session_id]
+                print(f"Using triage context for session: {session_id}")
             
-            # Get AI response for chat
-            ai_response = self.ai_provider.chat_complete(messages)
+            # Get AI response for chat with context
+            ai_response = self.ai_provider.chat_complete(messages, triage_context)
             
             # Calculate latency
             latency = f"{(datetime.now() - start_time).total_seconds():.3f}s"
@@ -174,15 +257,22 @@ class Agent:
             # Log successful request
             self._log_request(request_id, "chat_success", latency)
             
-            return {
+            response_data = {
                 "response": ai_response,
                 "request_id": request_id,
                 "latency": latency,
                 "timestamp": datetime.now().isoformat(),
                 "ai_provider": "GeminiAI",
                 "model_used": self.ai_provider.model_name,
-                "message_count": len(messages)
+                "message_count": len(messages),
+                "has_triage_context": triage_context is not None
             }
+            
+            # Include session_id in response if we have context
+            if session_id:
+                response_data["session_id"] = session_id
+            
+            return response_data
             
         except Exception as e:
             latency = f"{(datetime.now() - start_time).total_seconds():.3f}s"
@@ -193,8 +283,13 @@ class Agent:
                 "error": str(e),
                 "request_id": request_id,
                 "latency": latency,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "has_triage_context": False
             }
+    
+    def get_session_info(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get triage session information"""
+        return self.triage_sessions.get(session_id)
     
     def _generate_ai_response(self, symptoms: str, age: int, medical_history: str) -> Dict[str, Any]:
         """Generate response using AI provider"""
@@ -217,11 +312,11 @@ Medical History: {medical_history if medical_history else "None provided"}
 
 Please provide a concise SOAP note with these exact sections:
 - Subjective: Patient's reported symptoms in their own words
-- Objective: Clinical observations and vital signs, if not reported in medical history ask 
+- Objective: Clinical observations and vital signs
 - Assessment: Clinical impression and triage priority
-- Plan: Recommended actions and next steps, make questions here necessary to start chat
+- Plan: Recommended actions and next steps
 - Next Step: Specific recommendation (emergency care, teleconsultation, or self-care)
-- start_chat: Boolean variable (True/False) - True if teleconsultation chat is needed, False for self-care cases
+- start_chat: Boolean variable (True/False) - True if teleconsultation chat is needed
 
 Format the response as a structured clinical note. If inputs are in Portuguese, return response in Portuguese.
 
@@ -252,7 +347,7 @@ Format your response with clear section headers followed by colons."""
                 "assessment": "Professional assessment required", 
                 "plan": "Follow medical advice",
                 "nextStep": "Teleconsultation recommended",
-                "start_chat": False  # Default to False
+                "start_chat": False
             }
             
             lines = ai_response.split('\n')
@@ -308,7 +403,7 @@ Format your response with clear section headers followed by colons."""
                 "assessment": sections["assessment"],
                 "plan": sections["plan"],
                 "nextStep": sections["nextStep"],
-                "start_chat": sections["start_chat"]  # FIXED: Access as dictionary, not call as function
+                "start_chat": sections["start_chat"]
             }
             
         except Exception as e:

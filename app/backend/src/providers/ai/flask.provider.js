@@ -36,5 +36,22 @@ export default {
 
     return await response.text(); // string (JSON stringificado)
   },
+  async chat(message, { sessionId } = {}) {
+    const payload = { message };
+    if (sessionId) {
+      payload.session_id = sessionId;
+    }
+
+    const response = await fetch("http://flask_ai:5000/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Flask AI chat service failed: ${response.status}`);
+    }
+
+    return await response.json();
+  },
 };
-;

@@ -20,11 +20,23 @@ const mock = {
       nextStep: symptoms && symptoms.toLowerCase().includes("chest pain")
         ? "Seek emergency care"
         : "Teleconsultation recommended",
-      start_chat: false,
     };
 
     // Return JSON string to match expected format
     return JSON.stringify(response);
+  },
+  async chat(message, { sessionId } = {}) {
+    const finalMessage = typeof message === "string" ? message : "";
+    const reply = finalMessage
+      ? `Mock responder: noted "${finalMessage}"`
+      : "Mock responder: no message received";
+
+    return {
+      response: reply,
+      session_id: sessionId || "mock-session",
+      message_count: finalMessage ? 1 : 0,
+      ai_provider: "mock",
+    };
   },
 };
 
