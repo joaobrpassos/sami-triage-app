@@ -7,6 +7,8 @@ services:
       - .env
     depends_on:
       - flask_ai
+    volumes:
+      - ./app/frontend/dist:/app/frontend/dist:ro
 
   flask_ai:
     build:

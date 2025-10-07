@@ -38,6 +38,29 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+const frontendCandidatePaths = [
+  path.resolve(moduleDir, "../../frontend/dist"),
+  path.resolve(moduleDir, "../frontend/dist"),
+  path.resolve(process.cwd(), "../frontend/dist"),
+  path.resolve(process.cwd(), "frontend/dist"),
+];
+
+const frontendDistPath = frontendCandidatePaths.find((candidate) => fs.existsSync(candidate));
+
+if (frontendDistPath) {
+  app.use(express.static(frontendDistPath));
+  app.get("/", (_req, res) => {
+    res.sendFile(path.join(frontendDistPath, "index.html"));
+  });
+} else {
+  app.get("/", (_req, res) => {
+    res
+      .status(200)
+      .send("Frontend not built. Run the frontend build process to generate the dist folder.");
+  });
+}
+
 //middlewares
 app.use(logsMiddleware);
 app.use(metricsMiddleware);
