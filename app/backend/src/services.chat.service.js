@@ -1,27 +1,25 @@
-// src/controllers/chat.controller.js
-import aiProvider from "../providers/ai/index.js";
+import request from 'supertest';
+import app from 'server.js';
 
-export async function startChat(req, res) {
-  try {
-    const { body } = req;
+describe('Triage API', () => {
+  test('POST /triage should return 200 with valid data', async () => {
+    const response = await request(app)
+      .post('/triage')
+      .send({
+        symptoms: 'Headache',
+        severity: 5
+      });
 
-    const prompt = `
-      Você é um assistente de triagem médica.
-      O paciente forneceu os seguintes dados iniciais:
-      ${JSON.stringify(body)}
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveProperty('success', true);
+    expect(response.body.data).toHaveProperty('assessment');
+  });
 
-      Inicie uma conversa fazendo perguntas curtas e objetivas
-      para coletar mais informações relevantes.
-    `;
+  test('POST /triage should return 400 with invalid data', async () => {
+    const response = await request(app)
+      .post('/triage')
+      .send({});
 
-    const reply = await aiProvider.complete(prompt);
-
-    res.json({
-      chat: true,
-      message: reply,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to start chat" });
-  }
-}
+    expect(response.status).toBe(400);
+  });
+});

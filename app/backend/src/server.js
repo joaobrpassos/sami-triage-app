@@ -1,5 +1,4 @@
 import express from "express";
-import cors from "cors";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
@@ -8,6 +7,8 @@ import { triageHandler } from "./api/triage.controller.js";
 import { chatHandler } from "./api/chat.controller.js";
 import { logsMiddleware, errorLoggingMiddleware } from './middleware/middleware.logs.js';
 import { metricsMiddleware, getMetrics } from "./middleware/middleware.metrics.js";
+import { buildCorsMiddleware } from "./middleware/middleware.cors.js";
+import { buildRateLimitMiddleware } from "./middleware/middleware.rate-limit.js";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const candidatePaths = [
@@ -35,7 +36,8 @@ if (!envLoaded) {
 }
 
 const app = express();
-app.use(cors());
+app.use(buildCorsMiddleware());
+app.use(buildRateLimitMiddleware());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -69,9 +71,15 @@ app.use(metricsMiddleware);
 app.get("/healthz", (req, res) => res.json({ status: "ok" }));
 app.post("/triage", triageHandler);
 app.post("/chat", chatHandler);
+app.get("/metrics", (_req, res) => res.json(getMetrics()));
 
 //error middleware
 app.use(errorLoggingMiddleware);
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+if (process.env.NODE_ENV !== "test") {
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
+
+export default app;

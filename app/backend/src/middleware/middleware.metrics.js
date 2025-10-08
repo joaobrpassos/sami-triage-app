@@ -26,3 +26,12 @@ export function getMetrics() {
     averageDurationMs: triageCount > 0 ? (totalDurationMs / triageCount).toFixed(2) : 0,
   };
 }
+
+export function resetMetricsForTests() {
+  if (process.env.NODE_ENV !== "test") {
+    return;
+  }
+
+  triageCount = 0;
+  totalDurationMs = 0;
+}
