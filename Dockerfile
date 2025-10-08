@@ -28,13 +28,14 @@ WORKDIR /workspace
 
 ENV NODE_ENV=production
 ENV PORT=8080
+ENV HUSKY=0
 
 # Copy backend source and frontend build artifacts
 COPY --from=builder /workspace/app/backend /workspace/app/backend
 COPY --from=builder /workspace/app/frontend/dist /workspace/app/frontend/dist
 
 # Install production dependencies for backend only
-RUN npm install --omit=dev --prefix app/backend
+RUN npm install --omit=dev --ignore-scripts --prefix app/backend
 
 EXPOSE 8080
 

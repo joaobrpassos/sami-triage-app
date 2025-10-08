@@ -30,7 +30,7 @@ if [[ -z "$SERVICE_NAME" ]]; then
   exit 1
 fi
 
-ENV_VARS=("PORT=${PORT}")
+ENV_VARS=()
 
 # Optional runtime env vars
 [[ -n "${AI_PROVIDER:-}" ]] && ENV_VARS+=("AI_PROVIDER=${AI_PROVIDER}")
